@@ -1,0 +1,78 @@
+# wsl2-backup rclone filter rules
+# Rules are applied top-to-bottom. First match wins.
+# Syntax: - exclude, + include
+
+# ── Go ────────────────────────────────────────────────────────────────────────
+- /go/pkg/**
+- /go/bin/**
+- vendor/**
+- *.o
+- *.a
+
+# ── Node / TypeScript ─────────────────────────────────────────────────────────
+- node_modules/**
+- .npm/**
+- .yarn/cache/**
+- .yarn/unplugged/**
+- .pnpm-store/**
+- dist/**
+- .next/**
+- .nuxt/**
+- .svelte-kit/**
+- out/**
+- coverage/**
+
+# ── .NET / C# ─────────────────────────────────────────────────────────────────
+- **/obj/**
+- **/bin/Debug/**
+- **/bin/Release/**
+- *.user
+- .vs/**
+- .vscode/.browse.VC.db*
+- TestResults/**
+
+# ── Python (toolchain overlap) ────────────────────────────────────────────────
+- __pycache__/**
+- *.pyc
+- *.pyo
+- .venv/**
+- venv/**
+- .tox/**
+
+# ── Rust (if ever used) ───────────────────────────────────────────────────────
+- target/debug/**
+- target/release/**
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+- .docker/**
+
+# ── General build & cache ────────────────────────────────────────────────────
+- build/**
+- .cache/**
+- tmp/**
+- temp/**
+- *.log
+- logs/**
+
+# ── Large VCS objects ─────────────────────────────────────────────────────────
+- .git/objects/pack/**
+- .git/lfs/**
+
+# ── OS & editor junk ──────────────────────────────────────────────────────────
+- .DS_Store
+- Thumbs.db
+- *.swp
+- *.swo
+- *~
+
+# ── Large binaries / archives ─────────────────────────────────────────────────
+- *.iso
+- *.img
+- *.vmdk
+- *.tar.gz
+- *.zip
+- *.deb
+- *.rpm
+
+# ── Include everything else ───────────────────────────────────────────────────
++ **

@@ -1,0 +1,12 @@
+[Unit]
+Description=WSL2 Google Drive Backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/wsl2-backup
+StandardOutput=journal
+StandardError=journal
+# Uncomment and set if your rclone config is passphrase-protected:
+# Environment=RCLONE_CONFIG_PASS=your-passphrase
