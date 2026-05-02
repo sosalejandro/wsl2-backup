@@ -163,7 +163,7 @@ for f in "${DOTFILES[@]}"; do
   [[ -f "$HOME/$f" ]] && rclone_copy_file "$HOME/$f" "$DOTFILES_DEST/"
 done
 
-# ── ~/.config (curated, minus caches) ────────────────────────────────────────
+# ── ~/.config (curated, minus caches and secret key material) ────────────────
 log "Syncing ~/.config..."
 rclone_sync "$HOME/.config" "$GDRIVE_DISTRO/config" \
   --exclude "google-chrome/**" \
@@ -174,7 +174,9 @@ rclone_sync "$HOME/.config" "$GDRIVE_DISTRO/config" \
   --exclude "*/CachedData/**" \
   --exclude "nvim/plugged/**" \
   --exclude "nvim/lazy/**" \
-  --exclude "nvim/mason/**"
+  --exclude "nvim/mason/**" \
+  --exclude "sops/**" \
+  --exclude "age/**"
 
 # ── ~/.local/bin (custom scripts) ────────────────────────────────────────────
 if [[ -d "$HOME/.local/bin" ]]; then
@@ -197,6 +199,8 @@ declare -A CRED_PATHS=(
   [kube]="$HOME/.kube"
   [gh]="$HOME/.config/gh"
   [terraform]="$HOME/.terraform.d"
+  [age]="$HOME/.age"
+  [sops-age]="$HOME/.config/sops/age"
 )
 
 for label in "${!CRED_PATHS[@]}"; do

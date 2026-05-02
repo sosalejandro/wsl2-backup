@@ -37,6 +37,7 @@ Built for Go, Node/TypeScript, C#/.NET, AWS, and Azure dev environments.
 | Environment metadata (packages, go env, dotnet tools) | `gdrive:Backups/WSL2/<distro>/meta` | No |
 | `~/.ssh`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.gnupg` | `gdrive-crypt:` | **Yes** |
 | `~/.config/gh`, `~/.terraform.d` | `gdrive-crypt:` | **Yes** |
+| `~/.age`, `~/.config/sops/age` (age keys) | `gdrive-crypt:` | **Yes** |
 | `~/.docker/config.json` | `gdrive-crypt:docker/` | **Yes** |
 
 Build artifacts, caches, and `node_modules` are excluded via [`filters/dev.txt`](filters/dev.txt).
