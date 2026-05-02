@@ -12,6 +12,7 @@ Built for Go, Node/TypeScript, C#/.NET, AWS, and Azure dev environments.
 
 - [What gets backed up](#what-gets-backed-up)
 - [Prerequisites](#prerequisites)
+- [How rclone folders work](#how-rclone-folders-work)
 - [Step 1 — Install](#step-1--install)
 - [Step 2 — Configure the gdrive remote](#step-2--configure-the-gdrive-remote-google-drive)
 - [Step 3 — Configure the gdrive-crypt remote](#step-3--configure-the-gdrive-crypt-remote-encrypted-credentials)
@@ -32,15 +33,22 @@ Built for Go, Node/TypeScript, C#/.NET, AWS, and Azure dev environments.
 |---|---|---|
 | `~/Documents` (code projects) | `gdrive:Backups/WSL2/<distro>/Documents` | No |
 | Dotfiles (`.bashrc`, `.gitconfig`, `.npmrc`, etc.) | `gdrive:Backups/WSL2/<distro>/dotfiles` | No |
-| `~/.config` (minus caches) | `gdrive:Backups/WSL2/<distro>/config` | No |
+| `~/.config` (minus caches and secret material) | `gdrive:Backups/WSL2/<distro>/config` | No |
 | `~/.local/bin` (custom scripts) | `gdrive:Backups/WSL2/<distro>/local-bin` | No |
 | Environment metadata (packages, go env, dotnet tools) | `gdrive:Backups/WSL2/<distro>/meta` | No |
 | `~/.ssh`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.gnupg` | `gdrive-crypt:` | **Yes** |
 | `~/.config/gh`, `~/.terraform.d` | `gdrive-crypt:` | **Yes** |
-| `~/.age`, `~/.config/sops/age` (age keys) | `gdrive-crypt:` | **Yes** |
+| `~/.age`, `~/.config/sops` (age + SOPS keys) | `gdrive-crypt:` | **Yes** |
 | `~/.docker/config.json` | `gdrive-crypt:docker/` | **Yes** |
 
 Build artifacts, caches, and `node_modules` are excluded via [`filters/dev.txt`](filters/dev.txt).
+
+> **Note on SOPS:** The entire `~/.config/sops/` directory is backed up encrypted,
+> covering age keys (`~/.config/sops/age/keys.txt`), any SOPS configuration, and any
+> other key provider material stored there. Project-level `.sops.yaml` files live inside
+> `~/Documents` and are covered by the Documents sync. The actual encryption provider
+> credentials (AWS KMS → `~/.aws`, Azure Key Vault → `~/.azure`, GPG → `~/.gnupg`)
+> are each backed up encrypted individually.
 
 ---
 
@@ -50,6 +58,73 @@ Build artifacts, caches, and `node_modules` are excluded via [`filters/dev.txt`]
 - A Google account with Google Drive storage available
 - Internet access from within WSL2
 - `curl` (pre-installed on Ubuntu)
+
+---
+
+## How rclone folders work
+
+Before touching any configuration, it helps to understand what rclone remotes
+are and how they map to folders in Google Drive — because nothing needs to be
+created manually.
+
+### The remote:path syntax
+
+rclone uses a `remote:path` format in every command:
+
+```
+gdrive:Backups/WSL2/ubuntu-24.04/Documents
+│       │
+│       └─ folder path inside Google Drive (created automatically on first run)
+└─ the name you gave the remote in rclone config
+```
+
+- `gdrive:` alone means the root of your Google Drive ("My Drive")
+- `gdrive:Backups` means a folder called `Backups` at the root of My Drive
+- `gdrive:Backups/WSL2/ubuntu-24.04` means nested folders — all created automatically
+
+**You never create these folders yourself.** rclone creates them on the first
+sync if they do not exist.
+
+### Two remotes, one Google Drive
+
+You configure two rclone remotes that both point to the same Google Drive account:
+
+```
+gdrive          → plain access to Google Drive
+gdrive-crypt    → encrypted view, rooted at gdrive:Backups/WSL2/credentials
+```
+
+The `gdrive-crypt` remote is a wrapper around `gdrive`. When you write to
+`gdrive-crypt:ssh`, rclone encrypts the content and stores it inside
+`gdrive:Backups/WSL2/credentials/` as garbled filenames with encrypted content.
+
+### What you will see in Google Drive after the first backup
+
+```
+My Drive/
+└── Backups/
+    └── WSL2/
+        ├── ubuntu-24.04/                ← created automatically, named from /etc/os-release
+        │   ├── Documents/               ← your code, filters applied
+        │   ├── dotfiles/                ← .bashrc, .gitconfig, etc.
+        │   ├── config/                  ← ~/.config minus caches and key material
+        │   ├── local-bin/               ← ~/.local/bin scripts
+        │   └── meta/                    ← packages.txt, go-env.txt, etc.
+        └── credentials/                 ← this folder is readable...
+            ├── 3lzja8qp2n4v7s/          ← ...but contents are encrypted filenames
+            ├── 9fmx2yte1k8w0r/
+            └── p7vbn3czq5d1ux/
+```
+
+The `credentials/` folder and its subfolder names appear garbled in Google Drive
+because filename encryption is enabled on the `gdrive-crypt` remote. The actual
+data inside is also encrypted. Only rclone with your two passphrases can read it.
+
+### Why two passphrases
+
+rclone crypt uses the first passphrase to derive the encryption key and the
+second as a salt. Together they produce a unique key — using either one alone
+decrypts nothing. Store both in your password manager.
 
 ---
 
@@ -157,9 +232,9 @@ browser, choose `n`. It will then prompt you to paste the token.
 ## Step 3 — Configure the `gdrive-crypt` remote (encrypted credentials)
 
 This creates a second remote that transparently encrypts everything before
-uploading. Files land inside `gdrive:Backups/WSL2/credentials` as unreadable
-content with obfuscated filenames. Only someone with both passphrases can
-decrypt them.
+uploading. When you set the remote path to `gdrive:Backups/WSL2/credentials`,
+you are telling rclone: "store encrypted files inside that Google Drive folder."
+The folder does not need to exist — rclone creates it on first use.
 
 ```bash
 rclone config
@@ -175,6 +250,10 @@ Storage> crypt
 Remote to encrypt/decrypt.
 remote> gdrive:Backups/WSL2/credentials
 ```
+
+This line is the link between `gdrive-crypt` and the actual Google Drive folder.
+Everything written to `gdrive-crypt:` lands inside `gdrive:Backups/WSL2/credentials/`,
+encrypted. You can change the path to any folder you prefer — just be consistent.
 
 ```
 How to encrypt the filenames.
@@ -211,8 +290,8 @@ rclone ls gdrive-crypt:
 rclone delete gdrive-crypt:test.txt
 ```
 
-In Google Drive's web UI, look inside `Backups/WSL2/credentials/` — you should
-see a file with a garbled name. That is correct.
+In Google Drive's web UI, open `Backups/WSL2/credentials/` — you should see a
+file with a garbled name. That confirms encryption is working correctly.
 
 ---
 

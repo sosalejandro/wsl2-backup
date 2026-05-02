@@ -200,7 +200,7 @@ declare -A CRED_PATHS=(
   [gh]="$HOME/.config/gh"
   [terraform]="$HOME/.terraform.d"
   [age]="$HOME/.age"
-  [sops-age]="$HOME/.config/sops/age"
+  [sops]="$HOME/.config/sops"
 )
 
 for label in "${!CRED_PATHS[@]}"; do
