@@ -19,10 +19,11 @@ source "$CONFIG_FILE"
 GDRIVE_REMOTE="${GDRIVE_REMOTE:-gdrive}"
 GDRIVE_CRYPT_REMOTE="${GDRIVE_CRYPT_REMOTE:-gdrive-crypt}"
 GDRIVE_BACKUP_ROOT="${GDRIVE_BACKUP_ROOT:-Backups/WSL2}"
-RCLONE_TRANSFERS="${RCLONE_TRANSFERS:-8}"
-RCLONE_CHECKERS="${RCLONE_CHECKERS:-16}"
-RCLONE_CHUNK_SIZE="${RCLONE_CHUNK_SIZE:-256M}"
-RCLONE_BUFFER_SIZE="${RCLONE_BUFFER_SIZE:-256M}"
+RCLONE_TRANSFERS="${RCLONE_TRANSFERS:-16}"
+RCLONE_CHECKERS="${RCLONE_CHECKERS:-32}"
+RCLONE_CHUNK_SIZE="${RCLONE_CHUNK_SIZE:-64M}"
+RCLONE_BUFFER_SIZE="${RCLONE_BUFFER_SIZE:-128M}"
+RCLONE_TIMEOUT="${RCLONE_TIMEOUT:-5m}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/wsl2-backup/backup.log}"
 LOG_MAX_LINES="${LOG_MAX_LINES:-5000}"
 EXTRA_PATHS="${EXTRA_PATHS:-}"
@@ -42,6 +43,7 @@ FILTER_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/rclone/wsl2-dev-filter.txt"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 mkdir -p "$(dirname "$LOG_FILE")"
+START_TIME=$(date +%s)
 
 log() {
   local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -58,6 +60,12 @@ log_trim() {
   fi
 }
 
+elapsed() {
+  local secs=$(( $(date +%s) - START_TIME ))
+  printf '%dm%ds' $(( secs / 60 )) $(( secs % 60 ))
+}
+
+# Full-featured sync — for large directories (Documents, extra paths)
 rclone_sync() {
   local src="$1" dst="$2"
   shift 2
@@ -68,16 +76,46 @@ rclone_sync() {
     --drive-upload-cutoff="$RCLONE_CHUNK_SIZE" \
     --buffer-size="$RCLONE_BUFFER_SIZE" \
     --fast-list \
+    --order-by size,desc \
+    --multi-thread-streams=4 \
+    --multi-thread-cutoff=100M \
+    --drive-pacer-min-sleep=10ms \
+    --drive-pacer-burst=200 \
+    --retries=10 \
+    --retries-sleep=30s \
+    --low-level-retries=20 \
+    --timeout="$RCLONE_TIMEOUT" \
+    --contimeout=60s \
     --log-file="$LOG_FILE" \
     --log-level=INFO \
+    --stats=10s \
+    --stats-one-line \
     "$@"
 }
 
-rclone_copy_file() {
+# Lightweight sync — for small directories (credentials, config, dotfiles)
+# Skips --fast-list and --order-by overhead which aren't worth it for <100 files
+rclone_sync_small() {
   local src="$1" dst="$2"
-  rclone copy "$src" "$dst" \
+  shift 2
+  rclone sync "$src" "$dst" \
+    --transfers="$RCLONE_TRANSFERS" \
+    --checkers="$RCLONE_CHECKERS" \
+    --drive-chunk-size="$RCLONE_CHUNK_SIZE" \
+    --drive-upload-cutoff="$RCLONE_CHUNK_SIZE" \
+    --buffer-size="$RCLONE_BUFFER_SIZE" \
+    --drive-pacer-min-sleep=10ms \
+    --drive-pacer-burst=200 \
+    --retries=10 \
+    --retries-sleep=30s \
+    --low-level-retries=20 \
+    --timeout="$RCLONE_TIMEOUT" \
+    --contimeout=60s \
     --log-file="$LOG_FILE" \
-    --log-level=INFO
+    --log-level=INFO \
+    --stats=10s \
+    --stats-one-line \
+    "$@"
 }
 
 check_rclone_remote() {
@@ -87,6 +125,20 @@ check_rclone_remote() {
     log "Run: rclone config — to set it up."
     exit 1
   fi
+}
+
+# Wait for all background PIDs, log warnings on failure (don't abort)
+wait_jobs() {
+  local label="$1"
+  shift
+  local failed=0
+  for pid in "$@"; do
+    if ! wait "$pid"; then
+      log "WARN: a $label background sync failed (pid $pid) — check log above"
+      failed=1
+    fi
+  done
+  (( failed )) && log "WARN: $label phase completed with errors" || true
 }
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
@@ -114,20 +166,21 @@ META_DIR="$HOME/.local/share/wsl2-backup/meta"
 mkdir -p "$META_DIR"
 
 log "Capturing environment metadata..."
-dpkg --get-selections           > "$META_DIR/packages.txt"        2>/dev/null || true
-go env                          > "$META_DIR/go-env.txt"           2>/dev/null || true
-ls "$(go env GOPATH)/bin"       > "$META_DIR/go-tools.txt"        2>/dev/null || true
-node --version                  > "$META_DIR/node-version.txt"    2>/dev/null || true
-dotnet --list-sdks              > "$META_DIR/dotnet-sdks.txt"     2>/dev/null || true
-dotnet tool list -g             > "$META_DIR/dotnet-tools.txt"    2>/dev/null || true
+dpkg --get-selections           > "$META_DIR/packages.txt"          2>/dev/null || true
+go env                          > "$META_DIR/go-env.txt"             2>/dev/null || true
+ls "$(go env GOPATH)/bin"       > "$META_DIR/go-tools.txt"          2>/dev/null || true
+node --version                  > "$META_DIR/node-version.txt"      2>/dev/null || true
+dotnet --list-sdks              > "$META_DIR/dotnet-sdks.txt"       2>/dev/null || true
+dotnet tool list -g             > "$META_DIR/dotnet-tools.txt"      2>/dev/null || true
 az --version                    > "$META_DIR/azure-cli-version.txt" 2>/dev/null || true
-aws --version                   > "$META_DIR/aws-cli-version.txt" 2>/dev/null || true
-uname -r                        > "$META_DIR/kernel.txt"          2>/dev/null || true
+aws --version                   > "$META_DIR/aws-cli-version.txt"   2>/dev/null || true
+uname -r                        > "$META_DIR/kernel.txt"            2>/dev/null || true
 
-# ── Documents ─────────────────────────────────────────────────────────────────
+# ── Documents (largest sync — sequential, uploads biggest files first) ────────
 log "Syncing ~/Documents..."
 rclone_sync "$HOME/Documents" "$GDRIVE_DISTRO/Documents" \
   --filter-from "$FILTER_FILE"
+log "Documents done ($(elapsed) elapsed)"
 
 # ── Extra paths ───────────────────────────────────────────────────────────────
 if [[ -n "$EXTRA_PATHS" ]]; then
@@ -143,13 +196,15 @@ if [[ -n "$EXTRA_PATHS" ]]; then
   done
 fi
 
-# ── Metadata ──────────────────────────────────────────────────────────────────
-log "Syncing environment metadata..."
-rclone_sync "$META_DIR" "$GDRIVE_DISTRO/meta"
+# ── Small plaintext syncs — run in parallel ───────────────────────────────────
+log "Syncing metadata, dotfiles, config, local-bin (parallel)..."
+SMALL_PIDS=()
 
-# ── Dotfiles (individual files) ───────────────────────────────────────────────
-log "Syncing dotfiles..."
-DOTFILES_DEST="$GDRIVE_DISTRO/dotfiles"
+# Metadata
+rclone_sync_small "$META_DIR" "$GDRIVE_DISTRO/meta" &
+SMALL_PIDS+=($!)
+
+# Dotfiles — all files in one rclone call instead of N separate calls
 DOTFILES=(
   .bashrc .bash_profile .bash_aliases .bash_history
   .zshrc .zsh_history .zprofile
@@ -159,13 +214,26 @@ DOTFILES=(
   .tmux.conf .screenrc .editorconfig
   .psqlrc .sqliterc .myclirc
 )
+DOTFILE_INCLUDES=()
 for f in "${DOTFILES[@]}"; do
-  [[ -f "$HOME/$f" ]] && rclone_copy_file "$HOME/$f" "$DOTFILES_DEST/"
+  [[ -f "$HOME/$f" ]] && DOTFILE_INCLUDES+=("--include=$f")
 done
+if [[ ${#DOTFILE_INCLUDES[@]} -gt 0 ]]; then
+  rclone copy "$HOME" "$GDRIVE_DISTRO/dotfiles" \
+    "${DOTFILE_INCLUDES[@]}" \
+    --transfers="$RCLONE_TRANSFERS" \
+    --drive-pacer-min-sleep=10ms \
+    --drive-pacer-burst=200 \
+    --retries=10 \
+    --retries-sleep=30s \
+    --timeout="$RCLONE_TIMEOUT" \
+    --log-file="$LOG_FILE" \
+    --log-level=INFO &
+  SMALL_PIDS+=($!)
+fi
 
-# ── ~/.config (curated, minus caches and secret key material) ────────────────
-log "Syncing ~/.config..."
-rclone_sync "$HOME/.config" "$GDRIVE_DISTRO/config" \
+# ~/.config (curated, minus caches and secret key material)
+rclone_sync_small "$HOME/.config" "$GDRIVE_DISTRO/config" \
   --exclude "google-chrome/**" \
   --exclude "chromium/**" \
   --exclude "Code/**" \
@@ -176,22 +244,29 @@ rclone_sync "$HOME/.config" "$GDRIVE_DISTRO/config" \
   --exclude "nvim/lazy/**" \
   --exclude "nvim/mason/**" \
   --exclude "sops/**" \
-  --exclude "age/**"
+  --exclude "age/**" &
+SMALL_PIDS+=($!)
 
-# ── ~/.local/bin (custom scripts) ────────────────────────────────────────────
+# ~/.local/bin (custom scripts)
 if [[ -d "$HOME/.local/bin" ]]; then
-  log "Syncing ~/.local/bin..."
-  rclone_sync "$HOME/.local/bin" "$GDRIVE_DISTRO/local-bin"
+  rclone_sync_small "$HOME/.local/bin" "$GDRIVE_DISTRO/local-bin" &
+  SMALL_PIDS+=($!)
 fi
 
-# ── ~/.gnupg (GPG keys — encrypted remote) ───────────────────────────────────
+wait_jobs "plaintext" "${SMALL_PIDS[@]}"
+log "Small syncs done ($(elapsed) elapsed)"
+
+# ── Encrypted syncs — all run in parallel ─────────────────────────────────────
+log "Syncing credentials and keys (encrypted, parallel)..."
+CRYPT_PIDS=()
+
+# GPG keys
 if [[ -d "$HOME/.gnupg" ]]; then
-  log "Syncing ~/.gnupg (encrypted)..."
-  rclone_sync "$HOME/.gnupg" "${GDRIVE_CRYPT_REMOTE}:gnupg"
+  rclone_sync_small "$HOME/.gnupg" "${GDRIVE_CRYPT_REMOTE}:gnupg" &
+  CRYPT_PIDS+=($!)
 fi
 
-# ── Credentials (encrypted remote) ───────────────────────────────────────────
-log "Syncing credentials (encrypted)..."
+# Credential directories
 declare -A CRED_PATHS=(
   [ssh]="$HOME/.ssh"
   [aws]="$HOME/.aws"
@@ -207,17 +282,26 @@ for label in "${!CRED_PATHS[@]}"; do
   path="${CRED_PATHS[$label]}"
   if [[ -d "$path" ]]; then
     log "  └─ $path"
-    rclone_sync "$path" "${GDRIVE_CRYPT_REMOTE}:${label}"
+    rclone_sync_small "$path" "${GDRIVE_CRYPT_REMOTE}:${label}" &
+    CRYPT_PIDS+=($!)
   fi
 done
 
-# Docker registry auth only (not the full ~/.docker which holds image layers)
+# Docker registry auth (single file)
 if [[ -f "$HOME/.docker/config.json" ]]; then
   log "  └─ ~/.docker/config.json"
-  rclone_copy_file "$HOME/.docker/config.json" "${GDRIVE_CRYPT_REMOTE}:docker/"
+  rclone copy "$HOME/.docker/config.json" "${GDRIVE_CRYPT_REMOTE}:docker/" \
+    --retries=10 \
+    --timeout="$RCLONE_TIMEOUT" \
+    --log-file="$LOG_FILE" \
+    --log-level=INFO &
+  CRYPT_PIDS+=($!)
 fi
+
+wait_jobs "encrypted" "${CRYPT_PIDS[@]}"
+log "Encrypted syncs done ($(elapsed) elapsed)"
 
 # ── Wrap up ───────────────────────────────────────────────────────────────────
 log_trim
-log "Backup complete."
+log "Backup complete in $(elapsed)."
 log "──────────────────────────────────────────────"

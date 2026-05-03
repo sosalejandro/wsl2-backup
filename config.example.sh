@@ -25,10 +25,11 @@ EXTRA_PATHS=""
 # EXTRA_PATHS="$HOME/work $HOME/scripts"
 
 # ── rclone performance ────────────────────────────────────────────────────────
-RCLONE_TRANSFERS=8
-RCLONE_CHECKERS=16
-RCLONE_CHUNK_SIZE="256M"
-RCLONE_BUFFER_SIZE="256M"
+RCLONE_TRANSFERS=16
+RCLONE_CHECKERS=32
+RCLONE_CHUNK_SIZE="64M"   # smaller = faster retries on stalled uploads
+RCLONE_BUFFER_SIZE="128M"
+RCLONE_TIMEOUT="5m"       # abort stalled transfers after this long, then retry
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_FILE="$HOME/.local/share/wsl2-backup/backup.log"
