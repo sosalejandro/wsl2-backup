@@ -64,14 +64,18 @@
 - *.swo
 - *~
 
-# ── Large binaries / archives ─────────────────────────────────────────────────
+# ── Large binaries / archives (installers, disk images — NOT database dumps) ──
 - *.iso
 - *.img
 - *.vmdk
-- *.tar.gz
-- *.zip
 - *.deb
 - *.rpm
+- *.AppImage
+
+# ── Compressed archives (exclude generic ones, keep db dumps) ─────────────────
+# If you store database dumps as .tar.gz or .zip, comment these out
+- *.zip
+- *.tar.gz
 
 # ── Include everything else ───────────────────────────────────────────────────
 + **

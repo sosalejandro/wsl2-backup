@@ -120,11 +120,17 @@ rclone_sync_small() {
 
 check_rclone_remote() {
   local remote="$1"
-  if ! rclone lsd "${remote}:" &>/dev/null; then
+  local output
+  output=$(rclone lsd "${remote}:" 2>&1) || {
+    # "directory not found" means remote is reachable but path doesn't exist yet — OK,
+    # rclone sync will create it on first run
+    if echo "$output" | grep -q "directory not found"; then
+      return 0
+    fi
     log "ERROR: rclone remote '${remote}' not found or unreachable."
     log "Run: rclone config — to set it up."
     exit 1
-  fi
+  }
 }
 
 # Wait for all background PIDs, log warnings on failure (don't abort)
