@@ -45,6 +45,12 @@
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 - .docker/**
+# Docker volume data — owned by container users (root/UID 999), unreadable by
+# the host user. These are runtime state, not source files worth backing up.
+- **/data/mongodb-*/**
+- **/structurizr/1/**
+- **/structurizr/index/**
+- **/structurizr/logs/**
 
 # ── General build & cache ────────────────────────────────────────────────────
 - build/**

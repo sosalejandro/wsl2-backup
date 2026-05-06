@@ -185,7 +185,8 @@ uname -r                        > "$META_DIR/kernel.txt"            2>/dev/null 
 # ── Documents (largest sync — sequential, uploads biggest files first) ────────
 log "Syncing ~/Documents..."
 rclone_sync "$HOME/Documents" "$GDRIVE_DISTRO/Documents" \
-  --filter-from "$FILTER_FILE"
+  --filter-from "$FILTER_FILE" \
+  --ignore-errors || log "WARN: Documents sync finished with errors — check log, continuing"
 log "Documents done ($(elapsed) elapsed)"
 
 # ── Extra paths ───────────────────────────────────────────────────────────────
